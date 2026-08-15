@@ -1,0 +1,92 @@
+# Databricks Asset Bundle (DAB) Configuration
+# Multi-environment deployment with Medallion Architecture (Bronze -> Silver -> Gold)
+
+bundle:
+  name: databricks-dab-template
+
+include:
+  - resources/*.yml
+
+variables:
+  # Catalog and schema configuration
+  catalog:
+    description: Unity Catalog name
+    default: main
+  
+  schema:
+    description: Schema name for tables
+    default: default
+  
+  # Compute configuration
+  node_type:
+    description: Cluster node type
+    default: i3.xlarge
+  
+  spark_version:
+    description: Databricks Runtime version
+    default: 13.3.x-scala2.12
+
+targets:
+  # Development environment
+  dev:
+    mode: development
+    default: true
+    workspace:
+      host: https://dbc-316f5fb6-3c9c.cloud.databricks.com
+    
+    variables:
+      catalog: dev_catalog
+      schema: ${workspace.current_user.short_name}
+    
+    resources:
+      jobs:
+        # Override job settings for dev
+        medallion_pipeline_job:
+          schedule:
+            # Disable schedule in dev
+            pause_status: PAUSED
+
+  # Staging environment
+  staging:
+    mode: production
+    workspace:
+      host: https://dbc-316f5fb6-3c9c.cloud.databricks.com
+      root_path: /Workspace/.bundles/staging/${bundle.name}
+    
+    variables:
+      catalog: staging_catalog
+      schema: analytics
+    
+    resources:
+      jobs:
+        medallion_pipeline_job:
+          schedule:
+            quartz_cron_expression: "0 0 2 * * ?"  # 2 AM daily
+            timezone_id: America/Toronto
+            pause_status: UNPAUSED
+
+  # Production environment
+  prod:
+    mode: production
+    workspace:
+      host: https://dbc-316f5fb6-3c9c.cloud.databricks.com
+      root_path: /Workspace/.bundles/prod/${bundle.name}
+    
+    variables:
+      catalog: prod_catalog
+      schema: analytics
+      node_type: r5.2xlarge  # Larger nodes for production
+    
+    resources:
+      jobs:
+        medallion_pipeline_job:
+          schedule:
+            quartz_cron_expression: "0 0 1 * * ?"  # 1 AM daily
+            timezone_id: America/Toronto
+            pause_status: UNPAUSED
+          
+          email_notifications:
+            on_failure:
+              - data-eng-team@example.com
+            on_success:
+              - data-eng-team@example.com

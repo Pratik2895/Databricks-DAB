@@ -1,0 +1,114 @@
+# Job Definitions for Medallion Architecture
+# Notebook-based workflow: Bronze -> Silver -> Gold
+
+resources:
+  jobs:
+    # Medallion Pipeline Job
+    medallion_pipeline_job:
+      name: "${bundle.target}-medallion-pipeline"
+      
+      tasks:
+        # Task 1: Bronze Layer Ingestion
+        - task_key: bronze_ingestion
+          notebook_task:
+            notebook_path: ../src/bronze_ingestion.py
+            source: WORKSPACE
+            base_parameters:
+              catalog: ${var.catalog}
+              schema: ${var.schema}
+          
+          new_cluster:
+            spark_version: ${var.spark_version}
+            node_type_id: ${var.node_type}
+            num_workers: 2
+            spark_conf:
+              spark.databricks.delta.preview.enabled: "true"
+              spark.databricks.delta.optimizeWrite.enabled: "true"
+            custom_tags:
+              Environment: ${bundle.target}
+              Project: ${bundle.name}
+              Layer: bronze
+        
+        # Task 2: Silver Layer Transformation
+        - task_key: silver_transformation
+          depends_on:
+            - task_key: bronze_ingestion
+          
+          notebook_task:
+            notebook_path: ../src/silver_transformation.py
+            source: WORKSPACE
+            base_parameters:
+              catalog: ${var.catalog}
+              schema: ${var.schema}
+          
+          new_cluster:
+            spark_version: ${var.spark_version}
+            node_type_id: ${var.node_type}
+            num_workers: 3
+            spark_conf:
+              spark.databricks.delta.optimizeWrite.enabled: "true"
+            custom_tags:
+              Environment: ${bundle.target}
+              Project: ${bundle.name}
+              Layer: silver
+        
+        # Task 3: Gold Layer Aggregation
+        - task_key: gold_aggregation
+          depends_on:
+            - task_key: silver_transformation
+          
+          notebook_task:
+            notebook_path: ../src/gold_aggregation.py
+            source: WORKSPACE
+            base_parameters:
+              catalog: ${var.catalog}
+              schema: ${var.schema}
+          
+          new_cluster:
+            spark_version: ${var.spark_version}
+            node_type_id: ${var.node_type}
+            num_workers: 2
+            custom_tags:
+              Environment: ${bundle.target}
+              Project: ${bundle.name}
+              Layer: gold
+        
+        # Task 4: Data Quality Check
+        - task_key: data_quality_check
+          depends_on:
+            - task_key: gold_aggregation
+          
+          notebook_task:
+            notebook_path: ../src/data_quality_check.py
+            source: WORKSPACE
+            base_parameters:
+              catalog: ${var.catalog}
+              schema: ${var.schema}
+          
+          new_cluster:
+            spark_version: ${var.spark_version}
+            node_type_id: ${var.node_type}
+            num_workers: 1
+            custom_tags:
+              Environment: ${bundle.target}
+              Project: ${bundle.name}
+              Layer: quality
+      
+      # Email notifications (overridden per target)
+      email_notifications:
+        on_failure:
+          - ${workspace.current_user.userName}
+      
+      # Default schedule (overridden per target)
+      schedule:
+        quartz_cron_expression: "0 0 3 * * ?"  # 3 AM daily
+        timezone_id: UTC
+        pause_status: UNPAUSED
+      
+      max_concurrent_runs: 1
+      timeout_seconds: 7200
+      
+      tags:
+        Environment: ${bundle.target}
+        ManagedBy: DAB
+        Pipeline: Medallion
